@@ -104,7 +104,7 @@ def latency_notes(ping_ms: float, jitter_ms: float) -> list[Comparison]:
             ref["fiber_source"],
             "ping",
             "Server within",
-            f"{km / 2:,.0f} km of fibre",
+            f"{km / 2:,.0f} km",
             "server",
         )
     ]

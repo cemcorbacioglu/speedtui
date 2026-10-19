@@ -4,20 +4,31 @@ A terminal internet speed test built with [Textual](https://textual.textualize.i
 It measures against Cloudflare's public speed test endpoints only; no
 Ookla/speedtest.net servers are contacted.
 
-It draws below your prompt like a line sketch: one ink colour, thin rounded
-frames, dotted lines, small block digits. When you quit, the final result
-stays in your terminal's scrollback. (`--fullscreen` takes over the whole
-terminal instead.)
+Everything happens on one full-screen dashboard (`--inline` draws a compact
+version below your prompt instead, and leaves the result in the scrollback):
 
-- **Three tiles** with download, upload and ping, live while the test runs,
-  plus peak speed, data moved and jitter.
+- **Header** with the Cloudflare data centre, settings and a running timer.
+- **Tiles** for download, upload and ping: big numbers updating live, peak
+  speed, data moved, jitter, and a small bar or dot graph.
 - **Ping as Pong**: while latency is measured, a small dot-drawn Pong rally
   plays in the ping tile; the ball's speed follows your ping and its wobble
   your jitter. Afterwards the tile plots every latency sample.
-- **Speed over time**: a live dotted chart of download and upload speed.
-- **Side panel**: progress and your previous runs during the test; afterwards,
-  real-world comparisons (how long a 4K movie or a big game would take, what
-  your ping means for gaming and video calls), all approximate.
+- **Chart** with two tabs (`t`): speed over time, and ping & jitter per
+  sample, each with min/avg/max underneath.
+- **Side panel**: progress during the test; afterwards, real-world
+  comparisons (how long a 4K movie or a big game would take) and connection
+  quality (fibre distance, gaming, video calls, stability). All approximate.
+- **Recent results and server information** along the bottom when the
+  window is tall enough (38+ rows).
+
+Icons use Nerd Font glyphs; with a non-Nerd terminal font they show as boxes.
+
+What it deliberately does **not** show: packet loss (it cannot be measured
+honestly over HTTP; Cloudflare's UDP test needs credentials that are not
+public), a map or your location (that would need geolocation services other
+than Cloudflare), or a server picker (Cloudflare routes you to the nearest
+data centre automatically).
+
 - **History**: every result is saved to a local SQLite file (`h` to view).
 
 ## Run it
@@ -75,12 +86,12 @@ python3 -m venv .venv
 | `--streams N` | 6 | parallel connections for download/upload |
 | `--duration S` | 10 | seconds per direction |
 | `--cli` | | plain-text mode, no TUI |
-| `--fullscreen` | | use the whole terminal instead of drawing below the prompt |
+| `--inline` | | draw below the prompt instead of using the whole terminal |
 | `--history` | | print saved results and exit |
 
 ### Keys
 
-`r` run again · `h` history · `esc` back · `q` quit
+`r` run again · `t` switch chart · `h` history · `esc` back · `q` quit
 
 ## Build the executable
 
@@ -159,10 +170,10 @@ src/speedtui/
 ├── storage.py           SQLite history
 └── ui/
     ├── app.py           Textual app and screen flow
-    ├── dashboard.py     the test screen: tiles, chart, side panel
-    ├── chart.py         speed-over-time area chart
+    ├── dashboard.py     the test screen: header, tiles, chart, panels, footer
+    ├── chart.py         line chart, tile mini graphs
     ├── pong.py          Pong rally in the ping tile
-    ├── palette.py       colours and theme
+    ├── palette.py       colours, icons and theme
     ├── history.py       history screen
     ├── bigdigits.py     block-letter digit font
     └── errors.py        error dialog

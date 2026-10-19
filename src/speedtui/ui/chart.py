@@ -134,7 +134,10 @@ class ThroughputChart(Widget):
                 col = x // 2
                 tops[col] = min(tops.get(col, dots_h), y)
             for col, top_y in tops.items():
-                for row in range(top_y // 4, plot_h):
+                # Tint the line's own cell only when the line sits in its
+                # upper half; otherwise the fill would poke out above it.
+                first = top_y // 4 if top_y % 4 < 2 else top_y // 4 + 1
+                for row in range(first, plot_h):
                     fill_owner[row][col] = name
             for x, y in _dotted_path(coords):
                 row, col = y // 4, x // 2
@@ -143,7 +146,8 @@ class ThroughputChart(Widget):
             last_x, last_y = coords[-1]
             ends[name] = (last_y // 4, last_x // 2, pts[-1][1])
 
-        tick_rows = {round(plot_h - 1 - k * (plot_h - 1) / 4): y_max * k / 4 for k in range(5)}
+        steps = 4 if plot_h >= 9 else 2  # fewer ticks when short, so labels never touch
+        tick_rows = {round(plot_h - 1 - k * (plot_h - 1) / steps): y_max * k / steps for k in range(steps + 1)}
         grid_cols = {round(k * (plot_w - 1) / 4) for k in range(1, 4)}
 
         # End-of-line chips in the right margin, nudged apart if they collide.
@@ -218,7 +222,7 @@ class MiniBars(Widget):
     def render(self) -> Text:
         width, height = self.size.width, self.size.height
         slots = (width + 1) // 2
-        if not self.values or slots < 1:
+        if not self.values or slots < 4:  # too narrow to read as a history
             return Text("")
         values = self.values
         if len(values) > slots:  # average into as many buckets as fit

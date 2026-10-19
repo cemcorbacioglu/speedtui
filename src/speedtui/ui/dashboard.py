@@ -67,7 +67,7 @@ JITTER_FILL = "#2a1f08"
 
 
 def keycap(key: str, label: str) -> Text:
-    return Text.assemble((f" {key} ", f"bold {TEXT} on {GRID}"), (f" {label}    ", MUTED))
+    return Text.assemble((f" {key} ", f"bold {TEXT} on {GRID}"), (f" {label}  ", MUTED))
 
 
 def heading(icon: str, label: str, color: str) -> Text:
@@ -108,10 +108,12 @@ class SidePanel(Widget):
         if line.kind == "heading":
             return heading(line.icon, line.label, line.color)
         icon = ICONS.get(line.icon, " ")
-        head = Text.assemble((f"{icon}  ", MUTED), (f"{line.label} ", line.color))
+        tail = Text(f" {line.value}", style=f"bold {line.value_color}") if line.value else Text()
+        room = width - 3 - tail.cell_len - 2  # icon + gap, value, minimum leader
+        label = line.label if len(line.label) <= room else line.label[: max(room - 1, 0)] + "…"
+        head = Text.assemble((f"{icon}  ", MUTED), (f"{label} ", line.color))
         if not line.value:
             return head
-        tail = Text(f" {line.value}", style=f"bold {line.value_color}")
         dots = max(width - head.cell_len - tail.cell_len, 1)
         return head + Text("." * dots, style=FAINT) + tail
 
@@ -206,7 +208,7 @@ class DashboardScreen(Screen):
         padding: 0 1;
     }}
     #header Static, #footer Static {{ width: 1fr; }}
-    #header #brand {{ width: auto; }}
+    #header #brand {{ width: auto; margin-right: 2; }}
     .right {{ text-align: right; }}
     #tiles {{ height: 7; }}
     .tile {{
@@ -233,7 +235,7 @@ class DashboardScreen(Screen):
     #side {{ width: 1fr; min-width: 38; padding: 0 2; }}
     #chart-head {{ height: 1; margin-bottom: 1; }}
     #chart-head #tabs {{ width: 1fr; }}
-    #chart-head #legend {{ width: auto; }}
+    #chart-head #legend {{ width: auto; margin-left: 3; }}
     #charts {{ height: 1fr; }}
     #chart-stats {{ height: 3; }}
     #bottom {{ height: 9; }}
@@ -314,6 +316,7 @@ class DashboardScreen(Screen):
 
     def on_resize(self, event: Resize) -> None:
         self.query_one("#bottom").display = event.size.height >= MIN_HEIGHT_FOR_BOTTOM
+        self._render_header()
 
     def action_toggle_chart(self) -> None:
         self.chart_tab = "ping" if self.chart_tab == "speed" else "speed"
@@ -339,9 +342,11 @@ class DashboardScreen(Screen):
             state = Text.assemble(("● ", GREEN), (f"Done in {clock}", GREEN))
         else:
             state = Text.assemble(("● ", GREEN), (f"Running {clock}", GREEN))
+        wide = self.size.width >= 130
         text = Text(
-            f"{self.started:%Y-%m-%d %H:%M}  •  {self.config.streams} streams  •  "
-            f"{self.config.duration:g} s per direction  •  ",
+            (f"{self.started:%Y-%m-%d %H:%M}  •  " if wide else "")
+            + f"{self.config.streams} streams  •  "
+            + (f"{self.config.duration:g} s per direction  •  " if wide else f"{self.config.duration:g} s  •  "),
             style=MUTED,
         )
         self.query_one("#settings", Static).update(text + state)
