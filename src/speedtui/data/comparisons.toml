@@ -1,0 +1,138 @@
+# Reference data for the "what does this speed mean" panel.
+#
+# All figures are APPROXIMATE and meant for rough, real-world comparison.
+# Sizes are in decimal gigabytes (1 GB = 1,000,000,000 bytes), as file sizes
+# are usually advertised.
+#
+# short is the label used in the compact results table.
+# kind = "size": shows how long the transfer would take at the measured speed.
+# kind = "rate": shows how many of these streams the connection could carry.
+# direction picks which measured speed is used.
+
+[[item]]
+name = "a 2-hour 4K movie"
+short = "4K movie"
+direction = "download"
+kind = "size"
+gb = 14
+source = "Netflix help centre: Ultra HD streaming uses up to ~7 GB per hour"
+
+[[item]]
+name = "a big AAA game"
+short = "AAA game"
+direction = "download"
+kind = "size"
+gb = 100
+source = "Typical large AAA install; e.g. Steam lists Cyberpunk 2077 at 70 GB and Baldur's Gate 3 at 150 GB"
+
+[[item]]
+name = "the Ubuntu 24.04 desktop ISO"
+short = "Ubuntu ISO"
+direction = "download"
+kind = "size"
+gb = 6
+source = "releases.ubuntu.com: the amd64 desktop image is roughly 6 GB"
+
+[[item]]
+name = "the Fedora Workstation live ISO"
+short = "Fedora ISO"
+direction = "download"
+kind = "size"
+gb = 2.3
+source = "fedoraproject.org: the x86_64 Workstation live image is roughly 2.3 GB"
+
+[[item]]
+name = "a full English Wikipedia text dump"
+short = "Wikipedia dump"
+direction = "download"
+kind = "size"
+gb = 23
+source = "dumps.wikimedia.org: enwiki pages-articles-multistream.xml.bz2 is roughly 20–25 GB"
+
+[[item]]
+name = "an hour of CD-quality FLAC music"
+short = "1 h of FLAC music"
+direction = "download"
+kind = "size"
+gb = 0.35
+source = "Derived: CD audio is 1,411 kbit/s; FLAC typically compresses it to ~55%, about 350 MB per hour"
+
+[[item]]
+name = "4K Netflix streams"
+short = "4K Netflix streams"
+direction = "download"
+kind = "rate"
+mbps = 15
+source = "Netflix help centre: 15 Mbps or higher recommended for Ultra HD 4K"
+
+[[item]]
+name = "an hour of 4K30 phone video"
+short = "1 h of 4K video"
+direction = "upload"
+kind = "size"
+gb = 10.2
+source = "iPhone camera settings: 4K at 30 fps is ~170 MB per minute (High Efficiency)"
+
+[[item]]
+name = "a 10-minute 4K60 video for YouTube"
+short = "10 min 4K60 video"
+direction = "upload"
+kind = "size"
+gb = 4
+source = "iPhone camera settings: 4K at 60 fps is ~400 MB per minute (High Efficiency)"
+
+[[item]]
+name = "1,000 photos to cloud backup"
+short = "1,000 photos"
+direction = "upload"
+kind = "size"
+gb = 3
+source = "Derived: a 12 MP phone JPEG is roughly 3 MB"
+
+[[item]]
+name = "1080p video-call streams"
+short = "1080p video calls"
+direction = "upload"
+kind = "rate"
+mbps = 3.8
+source = "Zoom system requirements: 1080p HD group video needs ~3.8 Mbps up"
+
+# ---------------------------------------------------------------------------
+# Latency guidance
+# ---------------------------------------------------------------------------
+
+[latency]
+# Light in optical fibre travels at roughly 2/3 of c (refractive index ~1.47).
+fiber_km_per_ms = 200
+fiber_source = "Speed of light in glass fibre ≈ 200,000 km/s"
+
+# Upper bounds in ms of round-trip ping. Rule of thumb, not a formal standard.
+gaming_source = "Common rule of thumb for online games; not a formal standard"
+[[latency.gaming]]
+max_ms = 30
+verdict = "great, even for competitive shooters"
+short = "great"
+[[latency.gaming]]
+max_ms = 60
+verdict = "good for almost every online game"
+short = "good"
+[[latency.gaming]]
+max_ms = 100
+verdict = "fine for casual play; fast shooters may feel a little late"
+short = "fine for casual"
+[[latency.gaming]]
+max_ms = 150
+verdict = "noticeable lag in fast-paced games"
+short = "laggy"
+[[latency.gaming]]
+max_ms = 1e9
+verdict = "too slow for real-time games"
+short = "too slow"
+
+[latency.calls]
+# ITU-T G.114 recommends at most 150 ms one-way delay for interactive voice;
+# the network part of that is roughly half the round-trip ping.
+max_one_way_ms = 150
+# Cisco's voice QoS guidance: jitter under 30 ms.
+max_jitter_ms = 30
+source = "ITU-T G.114 (≤150 ms one-way delay); Cisco voice QoS guidance (jitter ≤30 ms)"
