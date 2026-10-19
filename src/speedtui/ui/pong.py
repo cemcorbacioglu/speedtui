@@ -15,7 +15,7 @@ import time
 from rich.text import Text
 from textual.widget import Widget
 
-from speedtui.ui.palette import BRIGHT, FAINT, INK, SOFT
+from speedtui.ui.palette import BLUE, GRID, MUTED, TEXT
 
 # Bit for the dot at (row, col) inside one braille cell.
 _DOT = [[0x01, 0x08], [0x02, 0x10], [0x04, 0x20], [0x40, 0x80]]
@@ -143,15 +143,15 @@ class PongCourt(Widget):
             for dy in (0, 1):
                 dot(bx + dx, by + dy, 3)
 
-        styles = {0: None, 1: FAINT, 2: INK, 3: f"bold {BRIGHT}"}
+        styles = {0: None, 1: GRID, 2: BLUE, 3: f"bold {TEXT}"}
         middle = rows // 2
         text = Text()
         for row in range(rows):
             if row:
                 text.append("\n")
-            text.append(left if row == middle else " " * len(left), style=SOFT)
+            text.append(left if row == middle else " " * len(left), style=MUTED)
             for col in range(court_w):
                 b = bits[row][col]
                 text.append(chr(0x2800 + b) if b else " ", style=styles[layer[row][col]])
-            text.append(right if row == middle else " " * len(right), style=INK)
+            text.append(right if row == middle else " " * len(right), style=BLUE)
         return text

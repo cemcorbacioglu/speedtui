@@ -72,6 +72,7 @@ class SpeedTuiApp(App):
             down = await self._throughput_phase(dashboard, "download")
             up = await self._throughput_phase(dashboard, "upload")
         except SpeedTestError as exc:
+            dashboard.show_failed()
             self.push_screen(ErrorScreen(str(exc)), self._on_error_choice)
             return
 

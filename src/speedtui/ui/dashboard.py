@@ -1,20 +1,29 @@
-"""The one screen a test runs on, drawn like a line sketch: three metric
-tiles, a dotted speed-over-time chart, and a side panel that tracks progress
-and then explains the result."""
+"""The one screen a test runs on.
+
+    header      brand, server, settings, running timer
+    tiles       download · upload · ping, each with a small graph
+    middle      chart (speed over time | ping & jitter) · side panel
+    bottom      recent results · server information   (only when tall enough)
+    footer      keys · status
+"""
 
 from __future__ import annotations
 
 import statistics
+import time
 from dataclasses import dataclass
+from datetime import datetime
 
 from rich.text import Text
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.events import Resize
 from textual.screen import Screen
 from textual.widget import Widget
-from textual.widgets import ContentSwitcher, Footer, Static
+from textual.widgets import ContentSwitcher, Static
 
-from speedtui.comparisons import latency_notes, pick_comparisons
+from speedtui.comparisons import latency_notes, load_reference, pick_comparisons
 from speedtui.measure import (
     Direction,
     LatencyResult,
@@ -25,88 +34,105 @@ from speedtui.measure import (
     ThroughputResult,
     jitter,
 )
-from speedtui.storage import History, StorageError
+from speedtui.storage import History, HistoryEntry, StorageError
 from speedtui.ui.bigdigits import BigNumber, format_ms, format_speed
-from speedtui.ui.chart import SampleDots, ThroughputChart
-from speedtui.ui.palette import BRIGHT, DOWNLOAD, FAINT, INK, PING, SOFT, UPLOAD
+from speedtui.ui.chart import MiniBars, SampleDots, ThroughputChart
+from speedtui.ui.palette import (
+    BG,
+    BLUE,
+    BORDER,
+    CYAN,
+    DOWNLOAD,
+    DOWNLOAD_FILL,
+    DOWNLOAD_LINE,
+    FAINT,
+    GREEN,
+    GRID,
+    ICONS,
+    MUTED,
+    PING,
+    TEXT,
+    UPLOAD,
+    UPLOAD_FILL,
+    UPLOAD_LINE,
+)
 from speedtui.ui.pong import PongCourt
 
-COLORS: dict[str, str] = {"download": DOWNLOAD, "upload": UPLOAD, "ping": PING}
-ARROWS = {"download": "↓", "upload": "↑", "ping": "◷"}
 RATE_WINDOW_S = 0.6  # instantaneous speed = bytes moved over the last 0.6 s
-STEPS = ("server", "latency", "download", "upload")
-STEP_LABELS = {"server": "server", "latency": "ping", "download": "download", "upload": "upload"}
+MIN_HEIGHT_FOR_BOTTOM = 38  # rows needed before the bottom panels are shown
+AMBER = "#fbbf24"
+VERDICT_COLORS = {"good": GREEN, "ok": AMBER, "bad": "#f87171"}
+PING_FILL = "#0c1a33"
+JITTER_FILL = "#2a1f08"
+
+
+def keycap(key: str, label: str) -> Text:
+    return Text.assemble((f" {key} ", f"bold {TEXT} on {GRID}"), (f" {label}    ", MUTED))
+
+
+def heading(icon: str, label: str, color: str) -> Text:
+    return Text.assemble((f"{ICONS[icon]}  ", color), (label, f"bold {color}"))
 
 
 # --------------------------------------------------------------------------
-# Small drawing widgets
+# Side panel: headings and icon rows with dotted leaders
 # --------------------------------------------------------------------------
-
-
-class LineBar(Widget):
-    """A one-row progress line: ━━━━━━──────."""
-
-    DEFAULT_CSS = "LineBar { height: 1; }"
-
-    def __init__(self, **kwargs) -> None:
-        super().__init__(**kwargs)
-        self.fraction = 0.0
-        self.style_done = INK
-
-    def set(self, fraction: float, style: str | None = None) -> None:
-        self.fraction = max(0.0, min(fraction, 1.0))
-        if style:
-            self.style_done = style
-        self.refresh()
-
-    def render(self) -> Text:
-        width = self.size.width
-        done = round(self.fraction * width)
-        return Text.assemble(("━" * done, self.style_done), ("─" * (width - done), FAINT))
 
 
 @dataclass
-class Row:
-    """One line of a Leaders table: marker label ······· value."""
-
+class Line:
+    kind: str  # "heading", "row" or "divider"
+    icon: str = ""
     label: str = ""
     value: str = ""
-    marker: str = " "
-    style: str = INK  # label and marker
-    value_style: str = SOFT
-    heading: bool = False  # a plain line of text, no leaders
+    color: str = TEXT  # heading colour / label colour
+    value_color: str = CYAN
 
 
-class Leaders(Widget):
-    """Rows joined by dotted leaders, laid out to the widget's width."""
+class SidePanel(Widget):
+    """Renders Lines to its size; spaces rows out when there is room."""
 
-    DEFAULT_CSS = "Leaders { height: 1fr; }"
+    DEFAULT_CSS = "SidePanel { height: 1fr; }"
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.rows: list[Row] = []
+        self.lines: list[Line] = []
 
-    def show(self, rows: list[Row]) -> None:
-        self.rows = rows
+    def show(self, lines: list[Line]) -> None:
+        self.lines = lines
         self.refresh()
 
+    def _render_line(self, line: Line, width: int) -> Text:
+        if line.kind == "divider":
+            return Text("─" * width, style=BORDER)
+        if line.kind == "heading":
+            return heading(line.icon, line.label, line.color)
+        icon = ICONS.get(line.icon, " ")
+        head = Text.assemble((f"{icon}  ", MUTED), (f"{line.label} ", line.color))
+        if not line.value:
+            return head
+        tail = Text(f" {line.value}", style=f"bold {line.value_color}")
+        dots = max(width - head.cell_len - tail.cell_len, 1)
+        return head + Text("." * dots, style=FAINT) + tail
+
     def render(self) -> Text:
-        width = self.size.width
-        text = Text()
-        for i, row in enumerate(self.rows):
-            if i:
-                text.append("\n")
-            if row.heading or not row.value:
-                text.append(f"{row.marker} " if row.marker.strip() else "", style=row.style)
-                text.append(row.label, style=row.style)
-                continue
-            head = f"{row.marker} {row.label} "
-            tail = f" {row.value}"
-            dots = max(width - len(head) - len(tail), 1)
-            text.append(head, style=row.style)
-            text.append("·" * dots, style=FAINT)
-            text.append(tail, style=row.value_style)
-        return text
+        width, height = self.size.width, self.size.height
+        rendered = [self._render_line(line, width) for line in self.lines]
+
+        def spaced(every_row: bool) -> list[Text]:
+            out: list[Text] = []
+            for i, (line, text) in enumerate(zip(self.lines, rendered)):
+                # Blank lines after headings and around dividers, and
+                # between rows too when there is room.
+                if i and (every_row or line.kind != "row" or self.lines[i - 1].kind == "heading"):
+                    out.append(Text(""))
+                out.append(text)
+            return out
+
+        for candidate in (spaced(True), spaced(False)):
+            if len(candidate) <= height:
+                return Text("\n").join(candidate)
+        return Text("\n").join(rendered)
 
 
 # --------------------------------------------------------------------------
@@ -114,80 +140,46 @@ class Leaders(Widget):
 # --------------------------------------------------------------------------
 
 
-class SpeedTile(Vertical):
-    """Download or upload: number, peak and volume, progress line."""
+class Tile(Horizontal):
+    """A metric tile: title, big number and detail on the left, a graph on the right."""
 
-    def __init__(self, direction: Direction) -> None:
-        super().__init__(id=direction, classes="tile")
-        self.direction = direction
-        self.border_title = f"{ARROWS[direction]} {direction.capitalize()}"
-        self.border_subtitle = "waiting"
+    def __init__(self, key: str, title: str, unit: str, color: str) -> None:
+        super().__init__(id=key, classes="tile")
+        self.key = key
+        self.title = title
+        self.unit = unit
+        self.color = color
 
     def compose(self) -> ComposeResult:
-        yield BigNumber("0.0", "Mbps", style=FAINT)
-        yield Static("", classes="sub")
-        yield Static("", classes="spacer")
-        yield LineBar()
+        with Vertical(classes="info"):
+            yield Static(heading(self.key, self.title, self.color), classes="title")
+            yield BigNumber("0" if self.key == "ping" else "0.0", self.unit, style=FAINT)
+            yield Static("", classes="sub")
+        with Vertical(classes="graph"):
+            yield Static("", classes="state")
+            yield Static("", classes="spacer")
+            yield from self.compose_graph()
 
-    def update(self, progress: ThroughputProgress, peak: float) -> None:
-        if progress.bytes_counted == 0:
-            self.border_subtitle = "warming up"
-        else:
-            self.query_one(BigNumber).set_value(format_speed(progress.mbps), f"bold {COLORS[self.direction]}")
-            self.query_one(".sub", Static).update(
-                f"peak {peak:.1f} · {progress.bytes_counted / 1e6:,.0f} MB"
-            )
-            self.border_subtitle = f"{progress.elapsed:.1f} s"
-        self.query_one(LineBar).set(progress.fraction, COLORS[self.direction])
+    def compose_graph(self) -> ComposeResult:
+        yield MiniBars(self.color, BORDER)
 
-    def finish(self, result: ThroughputResult, peak: float) -> None:
-        self.query_one(BigNumber).set_value(format_speed(result.mbps), f"bold {COLORS[self.direction]}")
-        self.query_one(".sub", Static).update(f"peak {peak:.1f} · {result.bytes_counted / 1e6:,.0f} MB")
-        self.query_one(LineBar).set(1.0, SOFT)
-        self.border_subtitle = "done"
+    def set_state(self, text: str) -> None:
+        self.query_one(".state", Static).update(Text(text, style=MUTED, justify="right"))
+
+    def set_number(self, value: str, sub: str) -> None:
+        self.query_one(BigNumber).set_value(value, f"bold {TEXT}")
+        self.query_one(".sub", Static).update(sub)
 
 
-class PingTile(Vertical):
-    """Ping: number, jitter, and Pong while sampling, then every sample."""
-
+class PingTile(Tile):
     def __init__(self) -> None:
-        super().__init__(id="ping", classes="tile")
-        self.border_title = "◷ Ping"
-        self.border_subtitle = "finding server"
+        super().__init__("ping", "Ping", "ms", PING)
         self.samples: list[float] = []
 
-    def compose(self) -> ComposeResult:
-        yield BigNumber("0", "ms", style=FAINT)
-        yield Static("", classes="sub")
+    def compose_graph(self) -> ComposeResult:
         with ContentSwitcher(initial="court"):
             yield PongCourt(id="court")
             yield SampleDots(PING, id="samples")
-
-    def set_server(self, server: ServerInfo) -> None:
-        self.query_one(PongCourt).server_label = server.colo
-        self.border_subtitle = "pinging"
-
-    def add_sample(self, ms: float, total: int) -> None:
-        self.samples.append(ms)
-        court = self.query_one(PongCourt)
-        court.latency_ms = ms
-        court.jitter_ms = jitter(self.samples)
-        self.query_one(BigNumber).set_value(format_ms(statistics.median(self.samples)), f"bold {PING}")
-        self.query_one(".sub", Static).update(f"jitter {jitter(self.samples):.1f} ms")
-        self.border_subtitle = f"{len(self.samples)} of {total}"
-
-    def finish(self, result: LatencyResult) -> None:
-        court = self.query_one(PongCourt)
-        court.latency_ms = result.median_ms
-        court.jitter_ms = result.jitter_ms
-        self.query_one(BigNumber).set_value(format_ms(result.median_ms), f"bold {PING}")
-        self.query_one(".sub", Static).update(f"jitter {result.jitter_ms:.1f} ms")
-        self.border_subtitle = f"median of {len(result.samples_ms)}"
-
-    def show_samples(self) -> None:
-        """Swap the rally for a graph of every sample once Pong has had its turn."""
-        self.query_one(SampleDots).show(self.samples)
-        self.query_one(ContentSwitcher).current = "samples"
 
 
 # --------------------------------------------------------------------------
@@ -196,177 +188,347 @@ class PingTile(Vertical):
 
 
 class DashboardScreen(Screen):
+    BINDINGS = [Binding("t", "toggle_chart", "chart")]
+
     DEFAULT_CSS = f"""
     DashboardScreen {{
         layout: vertical;
-        background: ansi_default;
+        background: {BG};
+        padding: 0 1;
     }}
     DashboardScreen:inline {{
-        height: 22;
+        height: 28;
         border: none;
     }}
-    DashboardScreen #header {{
-        height: 1;
+    #header, #footer {{
+        height: 3;
+        border: round {BORDER};
         padding: 0 1;
     }}
-    DashboardScreen #brand {{
-        width: 1fr;
-    }}
-    DashboardScreen #settings {{
-        width: auto;
-        color: {SOFT};
-    }}
-    DashboardScreen #tiles {{
-        height: 9;
-    }}
-    DashboardScreen .tile, DashboardScreen #chart-box, DashboardScreen #side {{
-        border: round {INK};
-        border-title-color: {INK};
-        border-title-align: left;
-        border-subtitle-color: {SOFT};
-        border-subtitle-align: right;
-        padding: 0 1;
-        background: ansi_default;
-    }}
-    DashboardScreen .tile {{
+    #header Static, #footer Static {{ width: 1fr; }}
+    #header #brand {{ width: auto; }}
+    .right {{ text-align: right; }}
+    #tiles {{ height: 7; }}
+    .tile {{
         width: 1fr;
         height: 100%;
+        padding: 0 1;
     }}
-    DashboardScreen .tile .sub {{
-        color: {SOFT};
-        height: 1;
+    #download {{ border: round {DOWNLOAD}; }}
+    #upload {{ border: round {UPLOAD}; }}
+    #ping {{ border: round {PING}; }}
+    .tile .info {{ width: auto; min-width: 26; }}
+    .tile .graph {{ width: 1fr; padding-left: 2; }}
+    .tile .sub {{ color: {MUTED}; }}
+    .tile .state {{ height: 1; }}
+    .tile .spacer {{ height: 1fr; }}
+    .tile ContentSwitcher {{ height: 2; }}
+    #middle {{ height: 1fr; }}
+    #chart-panel, #side, #recent, #server {{
+        border: round {BORDER};
+        padding: 0 1;
+        height: 100%;
     }}
-    DashboardScreen .tile .spacer {{
-        height: 1fr;
-    }}
-    DashboardScreen #ping ContentSwitcher {{
-        height: 1fr;
-    }}
-    DashboardScreen #lower {{
-        height: 1fr;
-    }}
-    DashboardScreen #chart-box {{
-        width: 3fr;
-    }}
-    DashboardScreen #side {{
-        width: 2fr;
-        min-width: 32;
-    }}
-    DashboardScreen Footer {{
-        background: ansi_default;
-    }}
+    #chart-panel {{ width: 2fr; }}
+    #side {{ width: 1fr; min-width: 38; padding: 0 2; }}
+    #chart-head {{ height: 1; margin-bottom: 1; }}
+    #chart-head #tabs {{ width: 1fr; }}
+    #chart-head #legend {{ width: auto; }}
+    #charts {{ height: 1fr; }}
+    #chart-stats {{ height: 3; }}
+    #bottom {{ height: 9; }}
+    #recent {{ width: 1fr; }}
+    #server {{ width: 1fr; }}
     """
 
     def __init__(self, config: TestConfig, history: History) -> None:
         super().__init__()
         self.config = config
         self.history = history
+        self.started = datetime.now()
+        self.t0 = time.monotonic()
+        self.finished_after: float | None = None
+        self.failed = False
+        self.server: ServerInfo | None = None
+        self.latency: LatencyResult | None = None
         self.step = "server"
         self.step_values: dict[str, str] = {}
-        self.recent = self._load_recent()
-        self._history: dict[str, list[tuple[float, int]]] = {"download": [], "upload": []}
+        self.chart_tab = "speed"
+        self.rates: dict[str, list[float]] = {"download": [], "upload": []}
+        self._progress: dict[str, list[tuple[float, int]]] = {"download": [], "upload": []}
         self.peaks: dict[str, float] = {"download": 0.0, "upload": 0.0}
+
+    # -- layout ------------------------------------------------------------------
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="header"):
-            yield Static(Text("speedtui", style=f"bold {BRIGHT}"), id="brand")
-            yield Static(
-                f"{self.config.streams} streams · {self.config.duration:g} s per direction",
-                id="settings",
-            )
+            yield Static(id="brand")
+            yield Static(id="settings", classes="right")
         with Horizontal(id="tiles"):
-            yield SpeedTile("download")
-            yield SpeedTile("upload")
+            yield Tile("download", "Download", "Mbps", DOWNLOAD)
+            yield Tile("upload", "Upload", "Mbps", UPLOAD)
             yield PingTile()
-        with Horizontal(id="lower"):
-            with Vertical(id="chart-box"):
-                yield ThroughputChart(self.config.duration, {"download": DOWNLOAD, "upload": UPLOAD})
+        with Horizontal(id="middle"):
+            with Vertical(id="chart-panel"):
+                with Horizontal(id="chart-head"):
+                    yield Static(id="tabs")
+                    yield Static(id="legend", classes="right")
+                with ContentSwitcher(id="charts", initial="speed-chart"):
+                    yield ThroughputChart(
+                        self.config.duration,
+                        {"download": (DOWNLOAD_LINE, DOWNLOAD_FILL), "upload": (UPLOAD_LINE, UPLOAD_FILL)},
+                        id="speed-chart",
+                    )
+                    yield ThroughputChart(
+                        max(self.config.latency_samples - 1, 1),
+                        {"ping": (PING, PING_FILL), "jitter": (AMBER, JITTER_FILL)},
+                        x_format=lambda v: f"#{v + 1:.0f}",
+                        id="ping-chart",
+                    )
+                yield Static(id="chart-stats", classes="right")
             with Vertical(id="side"):
-                yield Leaders()
-        yield Footer()
+                yield SidePanel()
+        with Horizontal(id="bottom"):
+            with Vertical(id="recent"):
+                yield Static(heading("history", "Recent results", BLUE))
+                yield Static(id="recent-table")
+            with Vertical(id="server"):
+                yield Static(heading("server-info", "Server information", BLUE))
+                yield Static(id="server-table")
+        with Horizontal(id="footer"):
+            yield Static(
+                keycap("r", "run test") + keycap("t", "chart") + keycap("h", "history") + keycap("q", "quit")
+            )
+            yield Static(id="status", classes="right")
 
     def on_mount(self) -> None:
-        self.query_one("#chart-box").border_title = "Speed over time, Mbps"
-        self.query_one("#side").border_title = "This run"
-        self._render_steps()
+        self.query_one("#brand", Static).update(self._brand())
+        self._render_header()
+        self._render_tabs()
+        self._render_stats()
+        self._render_progress()
+        self._render_recent()
+        self._render_server()
+        self._set_status("finding the nearest Cloudflare server", running=True)
+        self.set_interval(1, self._render_header)
 
-    # -- side panel ------------------------------------------------------------
+    def on_resize(self, event: Resize) -> None:
+        self.query_one("#bottom").display = event.size.height >= MIN_HEIGHT_FOR_BOTTOM
 
-    def _load_recent(self) -> list[Row]:
-        """The last few saved results, so this run has something to compare with."""
-        try:
-            entries = self.history.recent(limit=3)
-        except StorageError:
-            return []
-        if not entries:
-            return []
-        rows = [Row(heading=True), Row(label="previous runs", style=SOFT, heading=True)]
-        for e in entries:
-            rows.append(
-                Row(
-                    label=e.timestamp.astimezone().strftime("%b %d %H:%M"),
-                    value=f"↓{e.download_mbps:.0f} ↑{e.upload_mbps:.0f} ◷{e.ping_ms:.0f}",
-                    style=SOFT,
-                )
-            )
-        return rows
+    def action_toggle_chart(self) -> None:
+        self.chart_tab = "ping" if self.chart_tab == "speed" else "speed"
+        self.query_one("#charts", ContentSwitcher).current = f"{self.chart_tab}-chart"
+        self._render_tabs()
+        self._render_stats()
 
-    def _render_steps(self) -> None:
-        current = STEPS.index(self.step) if self.step in STEPS else len(STEPS)
-        rows = []
-        for i, step in enumerate(STEPS):
-            if i < current:
-                rows.append(Row(STEP_LABELS[step], self.step_values.get(step, ""), "✓", INK, INK))
-            elif i == current:
-                rows.append(
-                    Row(STEP_LABELS[step], self.step_values.get(step, "…"), "▸", f"bold {BRIGHT}", BRIGHT)
-                )
+    # -- header / footer -----------------------------------------------------------
+
+    def _brand(self) -> Text:
+        text = Text.assemble(("∿  ", CYAN), ("speedtui", f"bold {TEXT}"))
+        if self.server:
+            text.append("  │  ", style=FAINT)
+            text.append(f"Cloudflare {self.server.colo}", style=MUTED)
+        return text
+
+    def _render_header(self) -> None:
+        elapsed = self.finished_after if self.finished_after is not None else time.monotonic() - self.t0
+        clock = f"{int(elapsed) // 3600:02d}:{int(elapsed) % 3600 // 60:02d}:{int(elapsed) % 60:02d}"
+        if self.failed:
+            state = Text.assemble(("● ", "#f87171"), ("Failed", MUTED))
+        elif self.finished_after is not None:
+            state = Text.assemble(("● ", GREEN), (f"Done in {clock}", GREEN))
+        else:
+            state = Text.assemble(("● ", GREEN), (f"Running {clock}", GREEN))
+        text = Text(
+            f"{self.started:%Y-%m-%d %H:%M}  •  {self.config.streams} streams  •  "
+            f"{self.config.duration:g} s per direction  •  ",
+            style=MUTED,
+        )
+        self.query_one("#settings", Static).update(text + state)
+
+    def _set_status(self, text: str, running: bool = False) -> None:
+        dot = ("● ", AMBER) if running else ("● ", GREEN)
+        self.query_one("#status", Static).update(Text.assemble(dot, (text, MUTED)))
+
+    # -- chart panel ---------------------------------------------------------------
+
+    def _render_tabs(self) -> None:
+        tabs = Text()
+        for key, icon, label, unit in (("speed", "bolt", "Speed over time", "(Mbps)"),
+                                       ("ping", "ping", "Ping & jitter", "(ms)")):
+            active = key == self.chart_tab
+            tabs.append(f"{ICONS[icon]}  ", style=BLUE if active else FAINT)
+            tabs.append(label, style=f"bold {TEXT} underline" if active else MUTED)
+            tabs.append(f" {unit}", style=MUTED if active else FAINT)
+            tabs.append("   │   " if key == "speed" else "", style=FAINT)
+        self.query_one("#tabs", Static).update(tabs)
+        if self.chart_tab == "speed":
+            legend = Text.assemble(("■ ", DOWNLOAD_LINE), ("Download   ", MUTED), ("■ ", UPLOAD_LINE), ("Upload", MUTED))
+        else:
+            legend = Text.assemble(("■ ", PING), ("Ping   ", MUTED), ("■ ", AMBER), ("Jitter", MUTED))
+        self.query_one("#legend", Static).update(legend)
+
+    def _stats_rows(self) -> list[tuple[str, str, list[float]]]:
+        if self.chart_tab == "speed":
+            return [("Download", DOWNLOAD_LINE, self.rates["download"]), ("Upload", UPLOAD_LINE, self.rates["upload"])]
+        samples = self.query_one(PingTile).samples
+        jitters = [abs(b - a) for a, b in zip(samples, samples[1:])]
+        return [("Ping", PING, samples), ("Jitter", AMBER, jitters)]
+
+    def _render_stats(self) -> None:
+        text = Text(f"{'':>12}{'Min':>8}{'Avg':>8}{'Max':>8}", style=MUTED)
+        for label, color, values in self._stats_rows():
+            text.append("\n")
+            text.append("● ", style=color)
+            text.append(f"{label:<10}", style=MUTED)
+            if values:
+                text.append(f"{min(values):>8.1f}{statistics.fmean(values):>8.1f}{max(values):>8.1f}", style=TEXT)
             else:
-                rows.append(Row(STEP_LABELS[step], "", "·", FAINT, FAINT, heading=True))
-        self.query_one(Leaders).show(rows + self.recent)
+                text.append(f"{'–':>8}{'–':>8}{'–':>8}", style=FAINT)
+        self.query_one("#chart-stats", Static).update(text)
+
+    # -- side panel ----------------------------------------------------------------
+
+    def _render_progress(self) -> None:
+        steps = [("server", "server", "Server"), ("latency", "ping", "Ping"),
+                 ("download", "download", "Download"), ("upload", "upload", "Upload")]
+        order = [s[0] for s in steps]
+        current = order.index(self.step) if self.step in order else len(order)
+        lines = [Line("heading", "bolt", "This run", color=BLUE)]
+        for i, (key, icon, label) in enumerate(steps):
+            value = self.step_values.get(key, "")
+            if i < current:
+                lines.append(Line("row", icon, label, value, TEXT, CYAN))
+            elif i == current:
+                lines.append(Line("row", icon, label, value or "…", f"bold {TEXT}", TEXT))
+            else:
+                lines.append(Line("row", icon, label, "", FAINT))
+        self.query_one(SidePanel).show(lines)
 
     def _advance(self, step: str, value: str = "") -> None:
         self.step = step
         if value:
             self.step_values[step] = value
-        self._render_steps()
+        self._render_progress()
 
-    # -- events from the measurement -------------------------------------------
+    # -- bottom panels ---------------------------------------------------------------
+
+    def _render_recent(self, highlight_newest: bool = False) -> None:
+        try:
+            entries: list[HistoryEntry] = self.history.recent(limit=5)
+        except StorageError as exc:
+            self.query_one("#recent-table", Static).update(Text(str(exc), style="#f87171"))
+            return
+        cols = f"{'#':<3}{'Time':<11}{'Download':>10}{'Upload':>9}{'Ping':>7}{'Jitter':>8}"
+        text = Text(cols, style=MUTED)
+        if not entries:
+            text.append("\nNo results yet.", style=FAINT)
+        for i, e in enumerate(entries, 1):
+            row_bg = f" on {'#2a1650'}" if highlight_newest and i == 1 else ""
+            text.append("\n")
+            text.append(f"{i:<3}{e.timestamp.astimezone():%H:%M:%S}   ", style=f"{TEXT}{row_bg}")
+            text.append(f"{e.download_mbps:>10.1f}", style=f"{DOWNLOAD_LINE}{row_bg}")
+            text.append(f"{e.upload_mbps:>9.1f}", style=f"{UPLOAD_LINE}{row_bg}")
+            text.append(f"{e.ping_ms:>7.0f}", style=f"{PING}{row_bg}")
+            text.append(f"{e.jitter_ms:>8.1f}", style=f"{AMBER}{row_bg}")
+        self.query_one("#recent-table", Static).update(text)
+
+    def _max_km(self) -> float:
+        """Upper bound on fibre distance: light covers the ping as a round trip."""
+        assert self.latency is not None
+        return self.latency.median_ms * load_reference()["latency"]["fiber_km_per_ms"] / 2
+
+    def _render_server(self) -> None:
+        s = self.server
+        rows = [
+            ("Provider", "Cloudflare"),
+            ("Data centre", s.colo if s else "…"),
+            ("Your IP", s.ip if s else "…"),
+            ("Protocol", ("IPv6" if ":" in s.ip else "IPv4") if s else "…"),
+            ("Distance", f"≤ {self._max_km():,.0f} km (from ping)" if self.latency else "…"),
+            ("Tested at", f"{self.started:%Y-%m-%d %H:%M:%S}"),
+        ]
+        text = Text()
+        for i, (label, value) in enumerate(rows):
+            if i:
+                text.append("\n")
+            text.append(f"{label:<14}", style=MUTED)
+            text.append(value, style=TEXT)
+        self.query_one("#server-table", Static).update(text)
+
+    # -- events from the measurement ---------------------------------------------------
 
     def set_server(self, server: ServerInfo) -> None:
-        self.query_one("#brand", Static).update(
-            Text.assemble(("speedtui", f"bold {BRIGHT}"), ("   Cloudflare ", SOFT), (server.colo, INK))
-        )
+        self.server = server
+        self.query_one("#brand", Static).update(self._brand())
         self.step_values["server"] = f"Cloudflare {server.colo}"
-        self.query_one(PingTile).set_server(server)
+        tile = self.query_one(PingTile)
+        tile.query_one(PongCourt).server_label = server.colo
+        tile.set_state("pinging")
+        self._render_server()
         self._advance("latency")
+        self._set_status(f"measuring ping to Cloudflare {server.colo}", running=True)
 
     def add_sample(self, ms: float) -> None:
         tile = self.query_one(PingTile)
-        tile.add_sample(ms, self.config.latency_samples)
-        self._advance("latency", f"{len(tile.samples)} of {self.config.latency_samples}")
+        tile.samples.append(ms)
+        court = tile.query_one(PongCourt)
+        court.latency_ms = ms
+        court.jitter_ms = jitter(tile.samples)
+        tile.set_number(format_ms(statistics.median(tile.samples)), f"jitter {jitter(tile.samples):.1f} ms")
+        progress = f"{len(tile.samples)} of {self.config.latency_samples}"
+        tile.set_state(progress)
+        chart = self.query_one("#ping-chart", ThroughputChart)
+        i = len(tile.samples) - 1
+        chart.add_point("ping", i, ms)
+        if i:
+            chart.add_point("jitter", i, abs(ms - tile.samples[-2]))
+        if self.chart_tab == "ping":
+            self._render_stats()
+        self._advance("latency", progress)
 
     def finish_latency(self, result: LatencyResult) -> None:
-        self.query_one(PingTile).finish(result)
+        self.latency = result
+        tile = self.query_one(PingTile)
+        court = tile.query_one(PongCourt)
+        court.latency_ms = result.median_ms
+        court.jitter_ms = result.jitter_ms
+        tile.set_number(format_ms(result.median_ms), f"jitter {result.jitter_ms:.1f} ms")
+        tile.set_state(f"median of {len(result.samples_ms)}")
         self.step_values["latency"] = f"{result.median_ms:.1f} ms"
-        self._render_steps()
+        self._render_server()
+        self._render_progress()
 
     def start_direction(self, direction: Direction) -> None:
         if direction == "download":
-            self.query_one(PingTile).show_samples()
+            tile = self.query_one(PingTile)
+            tile.query_one(SampleDots).show(tile.samples)
+            tile.query_one(ContentSwitcher).current = "samples"
+        self.query_one(f"#{direction}", Tile).set_state("warming up")
         self._advance(direction, "starting")
+        self._set_status(f"measuring {direction} · {self.config.streams} streams", running=True)
 
     def update_progress(self, progress: ThroughputProgress) -> None:
         direction = progress.direction
-        history = self._history[direction]
+        history = self._progress[direction]
         history.append((progress.elapsed, progress.bytes_counted))
+        tile = self.query_one(f"#{direction}", Tile)
         rate = self._instant_rate(history)
         if rate is not None:
+            self.rates[direction].append(rate)
             self.peaks[direction] = max(self.peaks[direction], rate)
-            self.query_one(ThroughputChart).add_point(direction, progress.elapsed, rate)
-        self.query_one(f"#{direction}", SpeedTile).update(progress, self.peaks[direction])
+            self.query_one("#speed-chart", ThroughputChart).add_point(direction, progress.elapsed, rate)
+            tile.query_one(MiniBars).add(rate)
+            if self.chart_tab == "speed":
+                self._render_stats()
+        if progress.bytes_counted:
+            tile.set_number(
+                format_speed(progress.mbps),
+                f"peak {self.peaks[direction]:.1f}  •  {progress.bytes_counted / 1e6:,.0f} MB",
+            )
+            tile.set_state(f"{progress.elapsed:.1f} / {self.config.duration:g} s")
         self.step_values[direction] = f"{progress.elapsed:.1f} / {self.config.duration:g} s"
-        self._render_steps()
+        self._render_progress()
 
     def _instant_rate(self, history: list[tuple[float, int]]) -> float | None:
         now, latest = history[-1]
@@ -380,25 +542,31 @@ class DashboardScreen(Screen):
         return (latest - start_b) * 8 / (now - start_t) / 1e6
 
     def finish_direction(self, result: ThroughputResult) -> None:
-        self.query_one(f"#{result.direction}", SpeedTile).finish(result, self.peaks[result.direction])
+        tile = self.query_one(f"#{result.direction}", Tile)
+        tile.set_number(
+            format_speed(result.mbps),
+            f"peak {self.peaks[result.direction]:.1f}  •  {result.bytes_counted / 1e6:,.0f} MB",
+        )
+        tile.set_state("")
         self.step_values[result.direction] = f"{result.mbps:.1f} Mbps"
-        self._render_steps()
+        self._render_progress()
+
+    def show_failed(self) -> None:
+        self.failed = True
+        self.finished_after = time.monotonic() - self.t0
+        self._render_header()
+        self.query_one("#status", Static).update(Text.assemble(("● ", "#f87171"), ("test failed", MUTED)))
 
     def show_results(self, result: SpeedTestResult, saved: bool) -> None:
-        when = result.timestamp.astimezone().strftime("%Y-%m-%d %H:%M")
-        self.query_one("#settings", Static).update(
-            f"{when} · {self.config.streams} streams · {self.config.duration:g} s per direction"
-        )
-        side = self.query_one("#side")
-        side.border_title = "At these speeds, roughly"
-        side.border_subtitle = "saved · h for history" if saved else "not saved"
-        rows = [
-            Row(c.label, c.value, ARROWS[c.topic], INK, COLORS[c.topic])
-            for c in pick_comparisons(result.download.mbps, result.upload.mbps)
-        ]
-        rows.append(Row(heading=True))
-        rows += [
-            Row(c.label, c.value, ARROWS[c.topic], INK, PING)
-            for c in latency_notes(result.latency.median_ms, result.latency.jitter_ms)
-        ]
-        self.query_one(Leaders).show(rows)
+        self.finished_after = time.monotonic() - self.t0
+        self._render_header()
+        self.query_one(PingTile).set_state("")
+        lines = [Line("heading", "bolt", "At these speeds, roughly", color=BLUE)]
+        for c in pick_comparisons(result.download.mbps, result.upload.mbps):
+            lines.append(Line("row", c.icon, c.label, c.value, TEXT, CYAN))
+        lines += [Line("divider"), Line("heading", "signal", "Connection quality", color=GREEN)]
+        for c in latency_notes(result.latency.median_ms, result.latency.jitter_ms):
+            lines.append(Line("row", c.icon, c.label, c.value, TEXT, VERDICT_COLORS.get(c.verdict, CYAN)))
+        self.query_one(SidePanel).show(lines)
+        self._render_recent(highlight_newest=saved)
+        self._set_status("saved  •  h for history" if saved else "not saved")

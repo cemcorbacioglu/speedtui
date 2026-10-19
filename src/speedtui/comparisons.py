@@ -21,6 +21,8 @@ class Comparison:
     topic: str = ""  # "download", "upload" or "ping"
     label: str = ""  # compact form for tables: label ········ value
     value: str = ""
+    icon: str = ""  # icon name, see speedtui.ui.palette.ICONS
+    verdict: str = ""  # "good", "ok" or "bad" for quality notes
 
 
 @cache
@@ -68,7 +70,7 @@ def describe(item: dict[str, Any], mbps: float) -> Comparison:
         verb = "Upload" if item["direction"] == "upload" else "Download"
         text = f"{verb} {item['name']} (~{item['gb']:g} GB): {format_duration(seconds)}"
         label, value = f"{item['short']}, {item['gb']:g} GB", short_duration(seconds)
-    return Comparison(text, item["source"], item["direction"], label, value)
+    return Comparison(text, item["source"], item["direction"], label, value, item.get("icon", ""))
 
 
 def pick_comparisons(
@@ -101,24 +103,38 @@ def latency_notes(ping_ms: float, jitter_ms: float) -> list[Comparison]:
             f"at most ~{km / 2:,.0f} km of fibre away (the ping is a round trip)",
             ref["fiber_source"],
             "ping",
-            "server within",
+            "Server within",
             f"{km / 2:,.0f} km of fibre",
+            "server",
         )
     ]
     tier = next(t for t in ref["gaming"] if ping_ms <= t["max_ms"])
     notes.append(
-        Comparison(f"Gaming: {tier['verdict']}", ref["gaming_source"], "ping", "gaming", tier["short"])
+        Comparison(
+            f"Gaming: {tier['verdict']}", ref["gaming_source"], "ping", "Gaming", tier["short"],
+            "shield", "good" if tier["max_ms"] <= 60 else "ok" if tier["max_ms"] <= 100 else "bad",
+        )
     )
 
     calls = ref["calls"]
     if ping_ms / 2 > calls["max_one_way_ms"]:
         verdict = "delay is high enough that people will talk over each other"
-        short = "talk-over delay"
+        short, quality = "talk-over delay", "bad"
     elif jitter_ms > calls["max_jitter_ms"]:
         verdict = f"delay is fine, but {jitter_ms:.0f} ms jitter may cause choppy audio"
-        short = "choppy audio"
+        short, quality = "choppy audio", "ok"
     else:
         verdict = "fine; delay and jitter are well within recommended limits"
-        short = "fine"
-    notes.append(Comparison(f"Video calls: {verdict}", calls["source"], "ping", "video calls", short))
+        short, quality = "fine", "good"
+    notes.append(
+        Comparison(f"Video calls: {verdict}", calls["source"], "ping", "Video calls", short, "video", quality)
+    )
+    tier = next(t for t in ref["stability"] if jitter_ms <= t["max_ms"])
+    notes.append(
+        Comparison(
+            f"Stability: {tier['verdict']} ({jitter_ms:.1f} ms jitter)", ref["stability_source"], "ping",
+            "Stability (jitter)", tier["verdict"], "gauge",
+            "good" if tier["max_ms"] <= 15 else "ok" if tier["max_ms"] <= 30 else "bad",
+        )
+    )
     return notes

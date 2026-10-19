@@ -100,8 +100,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)  # prog = name it was run as
     parser.add_argument("--cli", action="store_true", help="plain-text output, no TUI")
     parser.add_argument("--history", action="store_true", help="print past results and exit")
-    parser.add_argument("--fullscreen", action="store_true",
-                        help="take over the whole terminal instead of drawing below the prompt")
+    parser.add_argument("--inline", action="store_true",
+                        help="draw below the prompt instead of using the whole terminal")
     parser.add_argument("--streams", type=int, default=6, help="parallel streams (default 6)")
     parser.add_argument("--duration", type=float, default=10.0,
                         help="seconds per direction (default 10)")
@@ -120,8 +120,8 @@ def main() -> None:
     ensure_terminal()
     from speedtui.ui.app import SpeedTuiApp
 
-    # Inline: draw below the prompt and leave the final result in the scrollback.
-    SpeedTuiApp(config).run(inline=not args.fullscreen, inline_no_clear=True)
+    # Inline mode leaves the final result in the scrollback after quitting.
+    SpeedTuiApp(config).run(inline=args.inline, inline_no_clear=True)
 
 
 if __name__ == "__main__":

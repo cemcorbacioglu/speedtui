@@ -4,7 +4,7 @@
 # Sizes are in decimal gigabytes (1 GB = 1,000,000,000 bytes), as file sizes
 # are usually advertised.
 #
-# short is the label used in the compact results table.
+# short is the label used in the compact results table; icon names a UI glyph.
 # kind = "size": shows how long the transfer would take at the measured speed.
 # kind = "rate": shows how many of these streams the connection could carry.
 # direction picks which measured speed is used.
@@ -12,6 +12,7 @@
 [[item]]
 name = "a 2-hour 4K movie"
 short = "4K movie"
+icon = "film"
 direction = "download"
 kind = "size"
 gb = 14
@@ -20,6 +21,7 @@ source = "Netflix help centre: Ultra HD streaming uses up to ~7 GB per hour"
 [[item]]
 name = "a big AAA game"
 short = "AAA game"
+icon = "gamepad"
 direction = "download"
 kind = "size"
 gb = 100
@@ -28,6 +30,7 @@ source = "Typical large AAA install; e.g. Steam lists Cyberpunk 2077 at 70 GB an
 [[item]]
 name = "the Ubuntu 24.04 desktop ISO"
 short = "Ubuntu ISO"
+icon = "disc"
 direction = "download"
 kind = "size"
 gb = 6
@@ -36,6 +39,7 @@ source = "releases.ubuntu.com: the amd64 desktop image is roughly 6 GB"
 [[item]]
 name = "the Fedora Workstation live ISO"
 short = "Fedora ISO"
+icon = "disc"
 direction = "download"
 kind = "size"
 gb = 2.3
@@ -44,6 +48,7 @@ source = "fedoraproject.org: the x86_64 Workstation live image is roughly 2.3 GB
 [[item]]
 name = "a full English Wikipedia text dump"
 short = "Wikipedia dump"
+icon = "book"
 direction = "download"
 kind = "size"
 gb = 23
@@ -52,6 +57,7 @@ source = "dumps.wikimedia.org: enwiki pages-articles-multistream.xml.bz2 is roug
 [[item]]
 name = "an hour of CD-quality FLAC music"
 short = "1 h of FLAC music"
+icon = "music"
 direction = "download"
 kind = "size"
 gb = 0.35
@@ -60,6 +66,7 @@ source = "Derived: CD audio is 1,411 kbit/s; FLAC typically compresses it to ~55
 [[item]]
 name = "4K Netflix streams"
 short = "4K Netflix streams"
+icon = "tv"
 direction = "download"
 kind = "rate"
 mbps = 15
@@ -68,6 +75,7 @@ source = "Netflix help centre: 15 Mbps or higher recommended for Ultra HD 4K"
 [[item]]
 name = "an hour of 4K30 phone video"
 short = "1 h of 4K video"
+icon = "play"
 direction = "upload"
 kind = "size"
 gb = 10.2
@@ -76,6 +84,7 @@ source = "iPhone camera settings: 4K at 30 fps is ~170 MB per minute (High Effic
 [[item]]
 name = "a 10-minute 4K60 video for YouTube"
 short = "10 min 4K60 video"
+icon = "play"
 direction = "upload"
 kind = "size"
 gb = 4
@@ -84,6 +93,7 @@ source = "iPhone camera settings: 4K at 60 fps is ~400 MB per minute (High Effic
 [[item]]
 name = "1,000 photos to cloud backup"
 short = "1,000 photos"
+icon = "image"
 direction = "upload"
 kind = "size"
 gb = 3
@@ -92,6 +102,7 @@ source = "Derived: a 12 MP phone JPEG is roughly 3 MB"
 [[item]]
 name = "1080p video-call streams"
 short = "1080p video calls"
+icon = "video"
 direction = "upload"
 kind = "rate"
 mbps = 3.8
@@ -108,6 +119,7 @@ fiber_source = "Speed of light in glass fibre ≈ 200,000 km/s"
 
 # Upper bounds in ms of round-trip ping. Rule of thumb, not a formal standard.
 gaming_source = "Common rule of thumb for online games; not a formal standard"
+stability_source = "Rule of thumb for real-time traffic; Cisco voice guidance puts the limit at 30 ms"
 [[latency.gaming]]
 max_ms = 30
 verdict = "great, even for competitive shooters"
@@ -128,6 +140,20 @@ short = "laggy"
 max_ms = 1e9
 verdict = "too slow for real-time games"
 short = "too slow"
+
+# Jitter tiers in ms (mean difference between consecutive pings).
+[[latency.stability]]
+max_ms = 5
+verdict = "excellent"
+[[latency.stability]]
+max_ms = 15
+verdict = "good"
+[[latency.stability]]
+max_ms = 30
+verdict = "fair"
+[[latency.stability]]
+max_ms = 1e9
+verdict = "poor"
 
 [latency.calls]
 # ITU-T G.114 recommends at most 150 ms one-way delay for interactive voice;
